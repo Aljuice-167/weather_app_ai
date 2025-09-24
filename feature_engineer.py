@@ -1,4 +1,3 @@
-
 # feature_engineer.py
 import os
 import pandas as pd
@@ -22,22 +21,24 @@ class WeatherFeatureEngineer:
         if not os.path.exists(PROCESSED_DATA_FILE):
             raise FileNotFoundError(f"Processed data file not found: {PROCESSED_DATA_FILE}")
         
-        self.data = pd.read_csv(PROCESSED_DATA_FILE)
-        
+        df = pd.read_csv(PROCESSED_DATA_FILE)
+
         # Ensure time column exists and is datetime
-        if "time" not in self.data.columns:
+        if "time" not in df.columns:
             raise KeyError("'time' column is required but not found in dataset.")
         
-        self.data["time"] = pd.to_datetime(self.data["time"], errors="coerce")
-        if self.data["time"].isnull().any():
+        df["time"] = pd.to_datetime(df["time"], errors="coerce")
+        if df["time"].isnull().any():
             print("⚠️ Warning: Some invalid timestamps found and set to NaT.")
-        
-        return self.data
+
+        self.data = df
+        return df
 
     def _add_missing_columns(self, df):
         """Add missing required columns with default values."""
         defaults = {
-            "tp": 0.0,          # Precipitation
+            "tp": 0.0,          # Precipitation (mm)
+            "t2m": 25.0,        # Temperature at 2m (°C)
             "sp": 101325.0,     # Surface pressure (Pa)
             "u10": 0.0,         # Eastward wind
             "v10": 0.0          # Northward wind
@@ -65,40 +66,46 @@ class WeatherFeatureEngineer:
             .transform(lambda x: x.rolling(7, min_periods=1).mean())
 
         df["temp_7d_avg"] = df.groupby(["latitude", "longitude"])["t2m"] \
-            .transform(lambda x: x.rolling(7, min_periods=1).mean()) if "t2m" in df.columns else 25.0
+            .transform(lambda x: x.rolling(7, min_periods=1).mean())
 
         # Extreme weather indicators
-        df["heavy_rain"] = (df["tp"] > 0.05).astype(int)         # > 5mm/hour
-        df["heat_wave"] = (df.get("t2m", 25) > 35).astype(int)   # > 35°C
+        df["heavy_rain"] = (df["tp"] > 0.05).astype(int)   # > 5mm/hour
+        df["heat_wave"] = (df["t2m"] > 35).astype(int)     # > 35°C
 
         # Soil moisture proxy (simplified)
-        df["soil_moisture"] = df["tp"] - 0.1 * df.get("t2m", 25)
+        df["soil_moisture"] = df["tp"] - 0.1 * df["t2m"]
 
         # Wind speed magnitude
         df["wind_speed"] = np.sqrt(df["u10"]**2 + df["v10"]**2)
 
         # Ensure 'month' column exists
-        if "month" not in df.columns:
-            df["month"] = df["time"].dt.month
-        
+        df["month"] = df["time"].dt.month
         df["is_rainy_season"] = df["month"].isin(range(3, 11)).astype(int)
 
-        # Lag features
+        # Lag features (1 day behind, assuming hourly or daily data)
         df["precip_lag24h"] = df.groupby(["latitude", "longitude"])["tp"].shift(1).fillna(0.0)
-        df["temp_lag24h"] = (
-            df.groupby(["latitude", "longitude"])["t2m"].shift(1)
-            if "t2m" in df.columns else pd.Series(25.0, index=df.index)
-        )
-        df["temp_lag24h"] = df["temp_lag24h"].fillna(df["t2m"].mean() if "t2m" in df.columns else 25.0)
+        df["temp_lag24h"] = df.groupby(["latitude", "longitude"])["t2m"].shift(1)
+        df["temp_lag24h"] = df["temp_lag24h"].fillna(df["t2m"].mean())
 
         # Reset index for cleanliness
         df = df.reset_index(drop=True)
 
+        self.data = df
         return df
 
-    def save_features(self, features):
+    def save_features(self, features=None):
         """Save engineered features to CSV."""
+        if features is None:
+            features = self.data
+        if features is None:
+            raise ValueError("No features to save. Run create_features() first.")
+
         os.makedirs(os.path.dirname(PROCESSED_DATA_FILE), exist_ok=True)
         features.to_csv(PROCESSED_DATA_FILE, index=False)
         print(f"✅ Features saved to {PROCESSED_DATA_FILE}")
 
+
+if __name__ == "__main__":
+    fe = WeatherFeatureEngineer()
+    df = fe.create_features()
+    fe.save_features(df)
