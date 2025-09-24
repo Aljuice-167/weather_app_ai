@@ -1,3 +1,4 @@
+# train.py
 import os
 import sys
 import pandas as pd
@@ -15,9 +16,15 @@ import joblib
 try:
     from colab_setup import setup_colab_environment
     setup_colab_environment()
-    from config import PROCESSED_DATA_FILE, DROUGHT_MODEL_FILE, FLOOD_MODEL_FILE, TEST_SIZE, RANDOM_STATE
+    from config import (
+        PROCESSED_DATA_FILE, DROUGHT_MODEL_FILE, FLOOD_MODEL_FILE,
+        TEST_SIZE, RANDOM_STATE
+    )
 except ImportError:
-    from config import PROCESSED_DATA_FILE, DROUGHT_MODEL_FILE, FLOOD_MODEL_FILE, TEST_SIZE, RANDOM_STATE
+    from config import (
+        PROCESSED_DATA_FILE, DROUGHT_MODEL_FILE, FLOOD_MODEL_FILE,
+        TEST_SIZE, RANDOM_STATE
+    )
 
 
 
@@ -27,7 +34,7 @@ def load_processed_data():
     if not os.path.exists(PROCESSED_DATA_FILE):
         raise FileNotFoundError(
             f"❌ Processed file not found: {PROCESSED_DATA_FILE}\n"
-            "➡️ Please run combine_file.py first to generate it."
+            "➡️ Please run feature_engineer.py first to generate it."
         )
     print(f"📂 Loading processed data from {PROCESSED_DATA_FILE} ...")
     return pd.read_csv(PROCESSED_DATA_FILE)
@@ -35,8 +42,35 @@ def load_processed_data():
 
 
 
+def add_labels_if_missing(data: pd.DataFrame) -> pd.DataFrame:
+    """Add drought and flood labels if they are missing."""
+    if "drought_label" not in data.columns:
+        print("ℹ️ Generating drought_label ...")
+        # Example rule: drought if precip_7d_avg < threshold
+        if "precip_7d_avg" in data.columns:
+            data["drought_label"] = (data["precip_7d_avg"] < 0.01).astype(int)
+        else:
+            raise KeyError("Missing precip_7d_avg for drought_label generation.")
+
+
+    if "flood_label" not in data.columns:
+        print("ℹ️ Generating flood_label ...")
+        # Example rule: flood if precipitation high + soil moisture high
+        if "precip_7d_avg" in data.columns and "soil_moisture" in data.columns:
+            data["flood_label"] = (
+                (data["precip_7d_avg"] > 0.05) & (data["soil_moisture"] > 2)
+            ).astype(int)
+        else:
+            raise KeyError("Missing features for flood_label generation.")
+
+
+    return data
+
+
+
+
 def build_model():
-    """Builds a model training pipeline with GridSearchCV for optimization."""
+    """Builds model training pipelines with hyperparameter search."""
     pipelines = {
         "RandomForest": Pipeline([
             ("scaler", StandardScaler()),
@@ -77,8 +111,6 @@ def train_and_evaluate(X, y, label):
 
 
     pipelines, param_grids = build_model()
-
-
     best_model = None
     best_score = 0
     best_name = None
@@ -86,16 +118,12 @@ def train_and_evaluate(X, y, label):
 
     for name, pipeline in pipelines.items():
         print(f"\n🔍 Training {name} for {label} prediction...")
-
-
         grid = GridSearchCV(pipeline, param_grids[name], cv=3, n_jobs=-1, scoring="accuracy")
         grid.fit(X_train, y_train)
 
 
         y_pred = grid.best_estimator_.predict(X_test)
         acc = accuracy_score(y_test, y_pred)
-
-
         print(f"✅ {name} accuracy for {label}: {acc:.4f}")
         print(classification_report(y_test, y_pred))
 
@@ -120,20 +148,23 @@ def main():
     data = load_processed_data()
 
 
-    # Here you must define the feature columns and targets.
-    # Example assumption:
+    # Step 2: Ensure labels exist
+    data = add_labels_if_missing(data)
+
+
+    # Step 3: Separate features and targets
     features = data.drop(columns=["drought_label", "flood_label"])
     drought_target = data["drought_label"]
     flood_target = data["flood_label"]
 
 
-    # Step 2: Train drought model
+    # Step 4: Train drought model
     drought_model = train_and_evaluate(features, drought_target, "drought")
     joblib.dump(drought_model, DROUGHT_MODEL_FILE)
     print(f"💾 Drought model saved to {DROUGHT_MODEL_FILE}")
 
 
-    # Step 3: Train flood model
+    # Step 5: Train flood model
     flood_model = train_and_evaluate(features, flood_target, "flood")
     joblib.dump(flood_model, FLOOD_MODEL_FILE)
     print(f"💾 Flood model saved to {FLOOD_MODEL_FILE}")
