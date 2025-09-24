@@ -39,7 +39,7 @@ def load_combined_era5_data():
         raise RuntimeError("No datasets could be loaded")
     
     # Combine all datasets along time dimension
-    combined_ds = xr.concat(datasets, dim='time')
+    combined_ds = xr.concat(datasets, dim='time', join='outer')
     
     return combined_ds
 

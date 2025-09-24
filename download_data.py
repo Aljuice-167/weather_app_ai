@@ -12,8 +12,8 @@ except ImportError:
     from config import CDS_API_URL, CDS_API_KEY, RAW_DATA_FILE, GHANA_BOUNDS
 
 def download_era5_data_by_chunks():
-    # Define the years and months to download
-    years = [2019, 2024]
+   # Define the years and months to download
+    years = list(range(2010, 2025))  # 2025 is excluded, so this covers 2010–2024
     months = [f'{m:02d}' for m in range(1, 13)]
 
     # Create the raw data directory if it doesn't exist

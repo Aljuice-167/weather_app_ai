@@ -39,7 +39,7 @@ class GhanaWeatherDataCollector:
                     datasets.append(ds)
                 
                 # Combine all datasets along time dimension
-                self.raw_data = xr.concat(datasets, dim='time')
+                self.raw_data = xr.concat(datasets, dim='time', join='outer')
                 print(f"Successfully combined {len(datasets)} NetCDF files with {engine} engine")
                 return self.raw_data
                 
