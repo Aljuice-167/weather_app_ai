@@ -1,8 +1,9 @@
-# data_collector.py
+# data_collector.py (alternative version)
 import os
 import glob
 import xarray as xr
 import pandas as pd
+import gc
 
 # Import config after setting up Colab environment
 try:
@@ -27,40 +28,63 @@ class GhanaWeatherDataCollector:
         
         print(f"Found {len(era5_files)} ERA5 files to combine")
         
-        # Try multiple engines in order of preference
-        engines = ['netcdf4', 'h5netcdf', 'scipy']
-        for engine in engines:
-            try:
-                # Load and combine all NetCDF files
-                datasets = []
-                for file in era5_files:
-                    print(f"Loading {file} with {engine} engine...")
-                    ds = xr.open_dataset(file, engine=engine)
-                    datasets.append(ds)
-                
-                # Combine all datasets along time dimension
-                self.raw_data = xr.concat(datasets, dim='time', join='outer')
-                print(f"Successfully combined {len(datasets)} NetCDF files with {engine} engine")
-                return self.raw_data
-                
-            except Exception as e:
-                print(f"Failed to open with {engine} engine: {str(e)}")
+        # Process files in batches to avoid memory issues
+        batch_size = 10  # Smaller batch size for more stability
+        all_dataframes = []
         
-        raise RuntimeError("Could not open NetCDF files with any available engine")
+        for i in range(0, len(era5_files), batch_size):
+            batch_files = era5_files[i:i+batch_size]
+            print(f"Processing batch {i//batch_size + 1}/{(len(era5_files)-1)//batch_size + 1} ({len(batch_files)} files)...")
+            
+            # Try multiple engines in order of preference
+            engines = ['netcdf4', 'h5netcdf', 'scipy']
+            for engine in engines:
+                try:
+                    # Load and combine all NetCDF files in this batch
+                    datasets = []
+                    for file in batch_files:
+                        print(f"Loading {os.path.basename(file)} with {engine} engine...")
+                        ds = xr.open_dataset(file, engine=engine)
+                        datasets.append(ds)
+                    
+                    # Combine all datasets along time dimension with explicit join parameter
+                    batch_ds = xr.concat(datasets, dim='time', join='outer')
+                    print(f"Successfully combined {len(datasets)} NetCDF files with {engine} engine")
+                    
+                    # Convert to DataFrame
+                    df = batch_ds.to_dataframe()
+                    df = df.reset_index()
+                    
+                    # Add to list of all dataframes
+                    all_dataframes.append(df)
+                    
+                    # Free memory
+                    del batch_ds, df
+                    gc.collect()
+                    
+                    break  # Exit engine loop if successful
+                    
+                except Exception as e:
+                    print(f"Failed to open with {engine} engine: {str(e)}")
+                    continue
+        
+        if not all_dataframes:
+            raise RuntimeError("Could not open NetCDF files with any available engine")
+        
+        # Combine all dataframes
+        print("Combining all batches...")
+        self.raw_data = pd.concat(all_dataframes, ignore_index=True)
+        return self.raw_data
     
     def preprocess_data(self):
         """Convert to DataFrame and clean data"""
         if self.raw_data is None:
             self.load_raw_data()
         
-        # Convert to DataFrame
-        df = self.raw_data.to_dataframe()
-        
-        # Reset index to make all index levels columns
-        df = df.reset_index()
+        df = self.raw_data.copy()
         
         # Print column names for debugging
-        print("\nDataFrame columns after reset_index:")
+        print("\nDataFrame columns:")
         print(list(df.columns))
         
         # Check for time-related columns
@@ -134,3 +158,4 @@ class GhanaWeatherDataCollector:
         
         self.processed_data.to_csv(PROCESSED_DATA_FILE, index=False)
         print(f"Saved processed data to {PROCESSED_DATA_FILE}")
+        print(f"DataFrame shape: {self.processed_data.shape}")

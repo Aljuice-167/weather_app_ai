@@ -22,10 +22,13 @@ def diagnose_netcdf():
     
     print(f"Found {len(era5_files)} ERA5 files to diagnose")
     
+    # Limit to first 10 files for diagnosis to avoid memory issues
+    era5_files = era5_files[:10]
+    
     # Load and combine all NetCDF files
     datasets = []
     for file in era5_files:
-        print(f"\nOpening file: {file}")
+        print(f"\nOpening file: {os.path.basename(file)}")
         try:
             ds = xr.open_dataset(file)
             datasets.append(ds)
@@ -40,9 +43,9 @@ def diagnose_netcdf():
         print("No datasets could be loaded")
         return
     
-    # Combine all datasets
+    # Combine all datasets with explicit join parameter to fix warning
     try:
-        combined_ds = xr.concat(datasets, dim='time')
+        combined_ds = xr.concat(datasets, dim='time', join='outer')
         
         print("\n=== COMBINED Dataset Info ===")
         print(combined_ds.info())
