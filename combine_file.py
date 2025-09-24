@@ -1,96 +1,67 @@
-# combine_file.py
 import os
-import glob
-import xarray as xr
 import pandas as pd
-import gc  # For memory management
+import xarray as xr
+from glob import glob
+from config import RAW_DATA_DIR, PROCESSED_DATA_FILE
 
-# Import config after setting up Colab environment
-try:
-    from colab_setup import setup_colab_environment
-    setup_colab_environment()
-    from config import RAW_DATA_DIR, PROCESSED_DATA_FILE
-except ImportError:
-    from config import RAW_DATA_DIR, PROCESSED_DATA_FILE
 
-def get_all_era5_files():
-    """Get all ERA5 files matching the pattern"""
-    return glob.glob(os.path.join(RAW_DATA_DIR, "era5_ghana_*.nc"))
+def process_single_file(file_path):
+    """Read a NetCDF file and return a DataFrame."""
+    try:
+        ds = xr.open_dataset(file_path)
+        df = ds.to_dataframe().reset_index()
+        return df
+    except Exception as e:
+        print(f"⚠️ Error processing {file_path}: {e}")
+        return None
+
 
 def process_era5_data():
-    """Process the combined ERA5 data and save to CSV"""
-    try:
-        # Get all ERA5 files
-        nc_files = get_all_era5_files()
-        
-        if not nc_files:
-            raise FileNotFoundError(f"No ERA5 files found in {RAW_DATA_DIR}")
-        
-        print(f"Found {len(nc_files)} ERA5 files to process")
-        
-        # Process files in batches to avoid memory issues
-        batch_size = 20  # Process 20 files at a time
-        all_dataframes = []
-        
-        for i in range(0, len(nc_files), batch_size):
-            batch_files = nc_files[i:i+batch_size]
-            print(f"Processing batch {i//batch_size + 1}/{(len(nc_files)-1)//batch_size + 1} ({len(batch_files)} files)...")
-            
-            # Load and combine all NetCDF files in this batch
-            datasets = []
-            for file in batch_files:
-                print(f"Loading {os.path.basename(file)}...")
-                try:
-                    ds = xr.open_dataset(file)
-                    datasets.append(ds)
-                except Exception as e:
-                    print(f"Error loading {file}: {str(e)}")
-                    continue
-            
-            if not datasets:
-                print(f"No datasets could be loaded in batch {i//batch_size + 1}")
-                continue
-            
-            # Combine all datasets along time dimension with explicit join parameter
-            combined_ds = xr.concat(datasets, dim='time', join='outer')
-            
-            # Convert to DataFrame
-            print("Converting to DataFrame...")
-            df = combined_ds.to_dataframe()
-            
-            # Reset index to make all coordinates columns
-            df = df.reset_index()
-            
-            # Add to list of all dataframes
-            all_dataframes.append(df)
-            
-            # Free memory
-            del combined_ds, df
-            gc.collect()
-        
-        if not all_dataframes:
-            raise RuntimeError("No data could be processed")
-        
-        # Combine all dataframes
-        print("Combining all batches...")
-        final_df = pd.concat(all_dataframes, ignore_index=True)
-        
-        # Create directory if it doesn't exist
-        os.makedirs(os.path.dirname(PROCESSED_DATA_FILE), exist_ok=True)
-        
-        # Save to CSV
-        print(f"Saving to {PROCESSED_DATA_FILE}...")
-        final_df.to_csv(PROCESSED_DATA_FILE, index=False)
-        
-        print(f"Processed data saved to {PROCESSED_DATA_FILE}")
-        print(f"Final DataFrame shape: {final_df.shape}")
-        print(f"Final DataFrame columns: {list(final_df.columns)}")
-        
-        return True
-    
-    except Exception as e:
-        print(f"Error processing ERA5 data: {str(e)}")
-        return False
+    # Ensure output directory exists
+    os.makedirs(os.path.dirname(PROCESSED_DATA_FILE), exist_ok=True)
+
+    # Collect all NetCDF files
+    nc_files = sorted(glob(os.path.join(RAW_DATA_DIR, "*.nc")))
+
+    if not nc_files:
+        print(f"❌ No NetCDF files found in {RAW_DATA_DIR}")
+        return
+
+    print(f"📂 Found {len(nc_files)} files to process.")
+
+    # Delete existing processed file to start fresh
+    if os.path.exists(PROCESSED_DATA_FILE):
+        os.remove(PROCESSED_DATA_FILE)
+
+    # Process files in batches
+    batch_size = 5
+    for i in range(0, len(nc_files), batch_size):
+        batch_files = nc_files[i:i + batch_size]
+        batch_dfs = []
+
+        print(f"⚙️ Processing batch {i // batch_size + 1} "
+              f"({len(batch_files)} files)...")
+
+        for f in batch_files:
+            df = process_single_file(f)
+            if df is not None:
+                batch_dfs.append(df)
+
+        if batch_dfs:
+            batch_df = pd.concat(batch_dfs, ignore_index=True)
+
+            # Write header only if file does not exist
+            write_header = not os.path.exists(PROCESSED_DATA_FILE)
+
+            batch_df.to_csv(PROCESSED_DATA_FILE,
+                            mode="a",
+                            header=write_header,
+                            index=False)
+
+            print(f"✅ Saved {len(batch_df)} rows to {PROCESSED_DATA_FILE}")
+
+    print("🎉 Finished processing all files.")
+
 
 if __name__ == "__main__":
     process_era5_data()
