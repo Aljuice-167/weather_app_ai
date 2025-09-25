@@ -1,4 +1,4 @@
-# train.py (deep learning version)
+# train.py (lightweight deep learning version)
 import os
 import pandas as pd
 import joblib
@@ -65,13 +65,13 @@ def add_labels_if_missing(data: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_nn_model(input_dim: int) -> Sequential:
-    """Build a simple feedforward neural network for binary classification."""
+    """Build a smaller feedforward neural network for binary classification."""
     model = Sequential([
-        Dense(128, activation="relu", input_dim=input_dim),
-        Dropout(0.3),
-        Dense(64, activation="relu"),
-        Dropout(0.3),
-        Dense(1, activation="sigmoid")  # binary classification
+        Dense(64, activation="relu", input_dim=input_dim),
+        Dropout(0.2),
+        Dense(32, activation="relu"),
+        Dropout(0.2),
+        Dense(1, activation="sigmoid")
     ])
     model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
     return model
@@ -85,8 +85,8 @@ def train_and_evaluate(X, y, label, model_file):
 
     # Scale features
     scaler = StandardScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_test = scaler.transform(X_test)
+    X_train = scaler.fit_transform(X_train).astype("float32")
+    X_test = scaler.transform(X_test).astype("float32")
 
     # Save scaler for inference
     scaler_file = model_file.replace(".h5", "_scaler.pkl")
@@ -103,15 +103,15 @@ def train_and_evaluate(X, y, label, model_file):
         save_best_only=True,
         verbose=1
     )
-    early_stop = EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)
+    early_stop = EarlyStopping(monitor="val_loss", patience=5, restore_best_weights=True)
 
     # Train
     print(f"\n🔍 Training Neural Network for {label} prediction...")
     history = model.fit(
         X_train, y_train,
         validation_split=0.2,
-        epochs=100,
-        batch_size=32,
+        epochs=40,           # fewer epochs
+        batch_size=16,       # smaller batch size
         callbacks=[checkpoint, early_stop],
         verbose=1
     )
@@ -136,7 +136,7 @@ def main():
 
     # Step 3: Separate features and targets
     feature_cols = [c for c in data.columns if c not in ["drought_label", "flood_label", "rainy_label"]]
-    features = data[feature_cols].values
+    features = data[feature_cols].values.astype("float32")
 
     # Step 4: Train models
     train_and_evaluate(features, data["drought_label"].values, "drought", DROUGHT_MODEL_FILE.replace(".pkl", ".h5"))
