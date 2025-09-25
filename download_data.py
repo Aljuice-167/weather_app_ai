@@ -13,7 +13,7 @@ except ImportError:
 
 def download_era5_data_by_chunks():
    # Define the years and months to download
-    years = list(range(2010, 2025))  # 2025 is excluded, so this covers 2010–2024
+    years = list(range(2020, 2025))  # 2025 is excluded, so this covers 2010–2024
     months = [f'{m:02d}' for m in range(1, 13)]
 
     # Create the raw data directory if it doesn't exist
