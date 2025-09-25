@@ -1,13 +1,16 @@
-# train.py (lightweight, linked to feature_engineer output)
+# train.py (deep learning version)
 import os
 import pandas as pd
+import joblib
+import numpy as np
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
 from sklearn.metrics import classification_report, accuracy_score
-from sklearn.linear_model import LogisticRegression
-from xgboost import XGBClassifier
-import joblib
+
+import tensorflow as tf
+from tensorflow.keras import Sequential
+from tensorflow.keras.layers import Dense, Dropout
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
 # Import config
 from config import (
@@ -61,69 +64,69 @@ def add_labels_if_missing(data: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def build_model(model_name: str):
-    """Return lightweight models."""
-    if model_name == "LogisticRegression":
-        return Pipeline([
-            ("scaler", StandardScaler()),
-            ("clf", LogisticRegression(max_iter=500, random_state=RANDOM_STATE))
-        ])
-    elif model_name == "XGBoost":
-        return XGBClassifier(
-            n_estimators=300,
-            max_depth=6,
-            learning_rate=0.1,
-            subsample=0.8,
-            colsample_bytree=0.8,
-            eval_metric="logloss",
-            random_state=RANDOM_STATE,
-            n_jobs=-1
-        )
-    else:
-        raise ValueError(f"Unknown model: {model_name}")
+def build_nn_model(input_dim: int) -> Sequential:
+    """Build a simple feedforward neural network for binary classification."""
+    model = Sequential([
+        Dense(128, activation="relu", input_dim=input_dim),
+        Dropout(0.3),
+        Dense(64, activation="relu"),
+        Dropout(0.3),
+        Dense(1, activation="sigmoid")  # binary classification
+    ])
+    model.compile(optimizer="adam", loss="binary_crossentropy", metrics=["accuracy"])
+    return model
 
 
 def train_and_evaluate(X, y, label, model_file):
-    """Train lightweight models, evaluate, and save best one."""
+    """Train deep learning model, evaluate, and save."""
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
     )
 
-    best_model = None
-    best_score = 0
-    best_name = None
+    # Scale features
+    scaler = StandardScaler()
+    X_train = scaler.fit_transform(X_train)
+    X_test = scaler.transform(X_test)
 
-    for model_name in ["LogisticRegression", "XGBoost"]:
-        print(f"\n🔍 Training {model_name} for {label} prediction...")
-        model = build_model(model_name)
+    # Save scaler for inference
+    scaler_file = model_file.replace(".h5", "_scaler.pkl")
+    joblib.dump(scaler, scaler_file)
+    print(f"💾 Scaler saved to {scaler_file}")
 
-        if model_name == "XGBoost":
-            model.fit(
-                X_train, y_train,
-                eval_set=[(X_test, y_test)],
-                early_stopping_rounds=20,
-                verbose=False
-            )
-        else:
-            model.fit(X_train, y_train)
+    # Build NN
+    model = build_nn_model(X_train.shape[1])
 
-        y_pred = model.predict(X_test)
-        acc = accuracy_score(y_test, y_pred)
-        print(f"✅ {model_name} accuracy for {label}: {acc:.4f}")
-        print(classification_report(y_test, y_pred))
+    # Callbacks
+    checkpoint = ModelCheckpoint(
+        filepath=model_file,
+        monitor="val_accuracy",
+        save_best_only=True,
+        verbose=1
+    )
+    early_stop = EarlyStopping(monitor="val_loss", patience=10, restore_best_weights=True)
 
-        if acc > best_score:
-            best_score = acc
-            best_model = model
-            best_name = model_name
+    # Train
+    print(f"\n🔍 Training Neural Network for {label} prediction...")
+    history = model.fit(
+        X_train, y_train,
+        validation_split=0.2,
+        epochs=100,
+        batch_size=32,
+        callbacks=[checkpoint, early_stop],
+        verbose=1
+    )
 
-    print(f"\n🏆 Best model for {label}: {best_name} (accuracy {best_score:.4f})")
-    joblib.dump(best_model, model_file)
+    # Evaluate
+    y_pred = (model.predict(X_test) > 0.5).astype(int).ravel()
+    acc = accuracy_score(y_test, y_pred)
+    print(f"✅ NN accuracy for {label}: {acc:.4f}")
+    print(classification_report(y_test, y_pred))
+
     print(f"💾 {label.capitalize()} model saved to {model_file}")
 
 
 def main():
-    print("🚀 Starting lightweight training pipeline...")
+    print("🚀 Starting deep learning training pipeline...")
 
     # Step 1: Load processed features
     data = load_processed_data()
@@ -133,12 +136,12 @@ def main():
 
     # Step 3: Separate features and targets
     feature_cols = [c for c in data.columns if c not in ["drought_label", "flood_label", "rainy_label"]]
-    features = data[feature_cols]
+    features = data[feature_cols].values
 
     # Step 4: Train models
-    train_and_evaluate(features, data["drought_label"], "drought", DROUGHT_MODEL_FILE)
-    train_and_evaluate(features, data["flood_label"], "flood", FLOOD_MODEL_FILE)
-    train_and_evaluate(features, data["rainy_label"], "rainy", RAINY_MODEL_FILE)
+    train_and_evaluate(features, data["drought_label"].values, "drought", DROUGHT_MODEL_FILE.replace(".pkl", ".h5"))
+    train_and_evaluate(features, data["flood_label"].values, "flood", FLOOD_MODEL_FILE.replace(".pkl", ".h5"))
+    train_and_evaluate(features, data["rainy_label"].values, "rainy", RAINY_MODEL_FILE.replace(".pkl", ".h5"))
 
     print("\n🎉 Training pipeline completed successfully!")
 
