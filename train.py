@@ -1,86 +1,152 @@
-# train.py
+# train.py (lightweight version)
 import os
-import joblib
+import sys
 import pandas as pd
 from sklearn.model_selection import train_test_split
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report
-from config import PROCESSED_DATA_FILE, DROUGHT_MODEL_FILE, FLOOD_MODEL_FILE
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
+from sklearn.metrics import classification_report, accuracy_score
+from sklearn.linear_model import LogisticRegression
+from xgboost import XGBClassifier
+import joblib
 
-# Extra model file for rainy season
-RAINY_MODEL_FILE = "models/rainy_season_model.pkl"
+# Import config
+try:
+    from colab_setup import setup_colab_environment
+    setup_colab_environment()
+    from config import (
+        PROCESSED_DATA_FILE, DROUGHT_MODEL_FILE,
+        FLOOD_MODEL_FILE, RAINY_MODEL_FILE,
+        TEST_SIZE, RANDOM_STATE
+    )
+except ImportError:
+    from config import (
+        PROCESSED_DATA_FILE, DROUGHT_MODEL_FILE,
+        FLOOD_MODEL_FILE, RAINY_MODEL_FILE,
+        TEST_SIZE, RANDOM_STATE
+    )
 
 
-def load_data():
-    """Load processed data with engineered features"""
+def load_processed_data():
+    """Load preprocessed features from CSV."""
     if not os.path.exists(PROCESSED_DATA_FILE):
-        raise FileNotFoundError(f"{PROCESSED_DATA_FILE} not found. Run feature_engineer.py first.")
+        raise FileNotFoundError(
+            f"❌ Processed file not found: {PROCESSED_DATA_FILE}\n"
+            "➡️ Please run feature_engineer.py first to generate it."
+        )
+    print(f"📂 Loading processed data from {PROCESSED_DATA_FILE} ...")
     return pd.read_csv(PROCESSED_DATA_FILE)
 
 
-def prepare_features_targets(df):
-    """Separate features and targets"""
-    feature_cols = [
-        "t2m", "d2m", "sp", "u10", "v10", "tp",
-        "precip_7d_avg", "temp_7d_avg",
-        "heavy_rain", "heat_wave", "soil_moisture", "wind_speed",
-        "is_rainy_season", "precip_lag24h", "temp_lag24h",
-        "latitude", "longitude"
-    ]
+def add_labels_if_missing(data: pd.DataFrame) -> pd.DataFrame:
+    """Add drought, flood, and rainy season labels if missing."""
+    if "drought_label" not in data.columns:
+        print("ℹ️ Generating drought_label ...")
+        if "precip_7d_avg" in data.columns:
+            data["drought_label"] = (data["precip_7d_avg"] < 0.01).astype(int)
+        else:
+            raise KeyError("Missing precip_7d_avg for drought_label generation.")
 
-    # X = input features
-    X = df[feature_cols]
+    if "flood_label" not in data.columns:
+        print("ℹ️ Generating flood_label ...")
+        if "precip_7d_avg" in data.columns and "soil_moisture" in data.columns:
+            data["flood_label"] = (
+                (data["precip_7d_avg"] > 0.05) & (data["soil_moisture"] > 2)
+            ).astype(int)
+        else:
+            raise KeyError("Missing features for flood_label generation.")
 
-    # y = labels
-    y_drought = df["drought_label"]
-    y_flood = df["flood_label"]
-    y_rainy = df["rainy_season_label"]
+    if "rainy_label" not in data.columns:
+        print("ℹ️ Generating rainy_label ...")
+        if "precip_7d_avg" in data.columns:
+            # Example: rainy season when 7-day avg precipitation > 0.1
+            data["rainy_label"] = (data["precip_7d_avg"] > 0.1).astype(int)
+        else:
+            raise KeyError("Missing precip_7d_avg for rainy_label generation.")
 
-    return X, y_drought, y_flood, y_rainy
+    return data
 
 
-def train_and_evaluate(X, y, label_name):
-    """Train and evaluate a RandomForest model"""
+def build_model(model_name: str):
+    """Return lightweight models."""
+    if model_name == "LogisticRegression":
+        return Pipeline([
+            ("scaler", StandardScaler()),
+            ("clf", LogisticRegression(max_iter=500, random_state=RANDOM_STATE))
+        ])
+    elif model_name == "XGBoost":
+        return XGBClassifier(
+            n_estimators=300,
+            max_depth=6,
+            learning_rate=0.1,
+            subsample=0.8,
+            colsample_bytree=0.8,
+            eval_metric="logloss",
+            random_state=RANDOM_STATE,
+            n_jobs=-1
+        )
+    else:
+        raise ValueError(f"Unknown model: {model_name}")
+
+
+def train_and_evaluate(X, y, label, model_file):
+    """Train lightweight models, evaluate, and save best one."""
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, stratify=y
+        X, y, test_size=TEST_SIZE, random_state=RANDOM_STATE, stratify=y
     )
 
-    model = RandomForestClassifier(
-        n_estimators=200,
-        max_depth=15,
-        random_state=42,
-        class_weight="balanced"
-    )
-    model.fit(X_train, y_train)
+    best_model = None
+    best_score = 0
+    best_name = None
 
-    y_pred = model.predict(X_test)
-    print(f"\n=== {label_name.upper()} MODEL REPORT ===")
-    print(classification_report(y_test, y_pred))
+    for model_name in ["LogisticRegression", "XGBoost"]:
+        print(f"\n🔍 Training {model_name} for {label} prediction...")
+        model = build_model(model_name)
 
-    return model
+        if model_name == "XGBoost":
+            model.fit(
+                X_train, y_train,
+                eval_set=[(X_test, y_test)],
+                early_stopping_rounds=20,
+                verbose=False
+            )
+        else:
+            model.fit(X_train, y_train)
+
+        y_pred = model.predict(X_test)
+        acc = accuracy_score(y_test, y_pred)
+        print(f"✅ {model_name} accuracy for {label}: {acc:.4f}")
+        print(classification_report(y_test, y_pred))
+
+        if acc > best_score:
+            best_score = acc
+            best_model = model
+            best_name = model_name
+
+    print(f"\n🏆 Best model for {label}: {best_name} (accuracy {best_score:.4f})")
+    joblib.dump(best_model, model_file)
+    print(f"💾 {label.capitalize()} model saved to {model_file}")
 
 
 def main():
-    print("Loading processed data...")
-    df = load_data()
+    print("🚀 Starting lightweight training pipeline...")
 
-    print("Preparing features and targets...")
-    X, y_drought, y_flood, y_rainy = prepare_features_targets(df)
+    # Step 1: Load processed features
+    data = load_processed_data()
 
-    # --- Train drought model ---
-    drought_model = train_and_evaluate(X, y_drought, "drought")
-    joblib.dump(drought_model, DROUGHT_MODEL_FILE)
-    print(f"Drought model saved to {DROUGHT_MODEL_FILE}")
+    # Step 2: Ensure labels exist
+    data = add_labels_if_missing(data)
 
-    # --- Train flood model ---
-    flood_model = train_and_evaluate(X, y_flood, "flood")
-    joblib.dump(flood_model, FLOOD_MODEL_FILE)
-    print(f"Flood model saved to {FLOOD_MODEL_FILE}")
+    # Step 3: Separate features and targets
+    feature_cols = [c for c in data.columns if c not in ["drought_label", "flood_label", "rainy_label"]]
+    features = data[feature_cols]
 
-    # --- Train rainy season model ---
-    rainy_model = train_and_evaluate(X, y_rainy, "rainy_season")
-    joblib.dump(rainy_model, RAINY_MODEL_FILE)
-    print(f"Rainy season model saved to {RAINY_MODEL_FILE}")
+    # Step 4: Train models
+    train_and_evaluate(features, data["drought_label"], "drought", DROUGHT_MODEL_FILE)
+    train_and_evaluate(features, data["flood_label"], "flood", FLOOD_MODEL_FILE)
+    train_and_evaluate(features, data["rainy_label"], "rainy", RAINY_MODEL_FILE)
+
+    print("\n🎉 Training pipeline completed successfully!")
 
 
 if __name__ == "__main__":
