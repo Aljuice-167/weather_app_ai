@@ -1,4 +1,4 @@
-# train.py (Colab-friendly, with auto-sampling & feature file detection)
+# train.py (lightweight, linked to feature_engineer output)
 import os
 import pandas as pd
 from sklearn.model_selection import train_test_split
@@ -9,38 +9,56 @@ from sklearn.linear_model import LogisticRegression
 from xgboost import XGBClassifier
 import joblib
 
+# Import config
 from config import (
     PROCESSED_DATA_FILE, DROUGHT_MODEL_FILE,
     FLOOD_MODEL_FILE, RAINY_MODEL_FILE,
     TEST_SIZE, RANDOM_STATE
 )
 
-# Max rows to load into Colab memory
-MAX_ROWS = 200_000
+# --- Ensure we train on feature-engineered dataset ---
+FEATURES_FILE = PROCESSED_DATA_FILE.replace(".csv", "_features.csv")
 
 
 def load_processed_data():
-    """Load engineered features if available, else fall back to base file."""
-    features_file = PROCESSED_DATA_FILE.replace(".csv", "_features.csv")
+    """Load preprocessed + engineered features"""
+    target_file = FEATURES_FILE if os.path.exists(FEATURES_FILE) else PROCESSED_DATA_FILE
+    if not os.path.exists(target_file):
+        raise FileNotFoundError(
+            f"❌ No processed dataset found.\n"
+            f"Tried: {FEATURES_FILE} and {PROCESSED_DATA_FILE}\n"
+            f"➡️ Please run feature_engineer.py first."
+        )
+    print(f"📂 Loading processed data from {target_file} ...")
+    return pd.read_csv(target_file)
 
-    if os.path.exists(features_file):
-        print(f"📂 Loading engineered features from {features_file} ...")
-        df = pd.read_csv(features_file)
-    elif os.path.exists(PROCESSED_DATA_FILE):
-        print(f"📂 Loading base processed data from {PROCESSED_DATA_FILE} ...")
-        df = pd.read_csv(PROCESSED_DATA_FILE)
-    else:
-        raise FileNotFoundError("❌ Neither features file nor base processed file found!")
 
-    print(f"   ✅ Data loaded. Shape: {df.shape}")
+def add_labels_if_missing(data: pd.DataFrame) -> pd.DataFrame:
+    """Add drought, flood, and rainy season labels if missing."""
+    if "drought_label" not in data.columns:
+        print("ℹ️ Generating drought_label ...")
+        if "precip_7d_avg" in data.columns:
+            data["drought_label"] = (data["precip_7d_avg"] < 0.01).astype(int)
+        else:
+            raise KeyError("Missing precip_7d_avg for drought_label generation.")
 
-    # Auto-sample if dataset is too big for Colab
-    if df.shape[0] > MAX_ROWS:
-        print(f"⚠️ Dataset too large ({df.shape[0]} rows). Sampling {MAX_ROWS} rows for Colab training...")
-        df = df.sample(n=MAX_ROWS, random_state=RANDOM_STATE).reset_index(drop=True)
-        print(f"   🔎 Sampled dataset shape: {df.shape}")
+    if "flood_label" not in data.columns:
+        print("ℹ️ Generating flood_label ...")
+        if "precip_7d_avg" in data.columns and "soil_moisture" in data.columns:
+            data["flood_label"] = (
+                (data["precip_7d_avg"] > 0.05) & (data["soil_moisture"] > 2)
+            ).astype(int)
+        else:
+            raise KeyError("Missing features for flood_label generation.")
 
-    return df
+    if "rainy_label" not in data.columns:
+        print("ℹ️ Generating rainy_label ...")
+        if "precip_7d_avg" in data.columns:
+            data["rainy_label"] = (data["precip_7d_avg"] > 0.1).astype(int)
+        else:
+            raise KeyError("Missing precip_7d_avg for rainy_label generation.")
+
+    return data
 
 
 def build_model(model_name: str):
@@ -107,23 +125,11 @@ def train_and_evaluate(X, y, label, model_file):
 def main():
     print("🚀 Starting lightweight training pipeline...")
 
-    # Step 1: Load processed/engineered data
+    # Step 1: Load processed features
     data = load_processed_data()
 
     # Step 2: Ensure labels exist
-    for label, rule in {
-        "drought_label": lambda df: (df["precip_7d_avg"] < 0.01).astype(int) if "precip_7d_avg" in df.columns else None,
-        "flood_label": lambda df: (
-            (df["precip_7d_avg"] > 0.05) & (df["soil_moisture"] > 2)
-        ).astype(int) if "precip_7d_avg" in df.columns and "soil_moisture" in df.columns else None,
-        "rainy_label": lambda df: (df["precip_7d_avg"] > 0.1).astype(int) if "precip_7d_avg" in df.columns else None,
-    }.items():
-        if label not in data.columns:
-            print(f"ℹ️ Generating {label} ...")
-            series = rule(data)
-            if series is None:
-                raise KeyError(f"Missing required features to generate {label}")
-            data[label] = series
+    data = add_labels_if_missing(data)
 
     # Step 3: Separate features and targets
     feature_cols = [c for c in data.columns if c not in ["drought_label", "flood_label", "rainy_label"]]
