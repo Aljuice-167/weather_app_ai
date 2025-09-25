@@ -127,28 +127,54 @@ def add_labels_if_missing(data: pd.DataFrame) -> pd.DataFrame:
     """Add drought, flood, and rainy season labels if missing."""
     print("ℹ️ Generating labels...")
     
-    # Drought label - simplified definition
+    # First, let's examine the data to understand the ranges
+    if "tp" in data.columns:
+        tp_stats = data["tp"].describe()
+        print(f"   Precipitation stats: min={tp_stats['min']:.6f}, max={tp_stats['max']:.6f}, mean={tp_stats['mean']:.6f}")
+    
+    if "t2m" in data.columns:
+        t2m_stats = data["t2m"].describe()
+        print(f"   Temperature stats: min={t2m_stats['min']:.2f}, max={t2m_stats['max']:.2f}, mean={t2m_stats['mean']:.2f}")
+    
+    # Drought label - more realistic thresholds
     if "drought_label" not in data.columns:
-        if "tp" in data.columns and "t2m" in data.columns:
-            data["drought_label"] = ((data["tp"] < 0.001) & (data["t2m"] > 30)).astype(int)
-        elif "precip_7d_avg" in data.columns:
-            data["drought_label"] = (data["precip_7d_avg"] < 0.01).astype(int)
+        if "precip_7d_avg" in data.columns and "t2m" in data.columns:
+            # Use percentile-based thresholds for better balance
+            precip_threshold = data["precip_7d_avg"].quantile(0.1)  # Bottom 10% precipitation
+            temp_threshold = data["t2m"].quantile(0.8)  # Top 20% temperature
+            data["drought_label"] = ((data["precip_7d_avg"] <= precip_threshold) & 
+                                   (data["t2m"] >= temp_threshold)).astype(int)
+        elif "tp" in data.columns and "t2m" in data.columns:
+            # Use percentile thresholds
+            precip_threshold = data["tp"].quantile(0.05)  # Very low precipitation
+            temp_threshold = data["t2m"].quantile(0.85)   # High temperature
+            data["drought_label"] = ((data["tp"] <= precip_threshold) & 
+                                   (data["t2m"] >= temp_threshold)).astype(int)
         else:
             data["drought_label"] = 0
     
-    # Flood label - simplified definition
+    # Flood label - more realistic thresholds
     if "flood_label" not in data.columns:
-        if "tp" in data.columns:
-            data["flood_label"] = (data["tp"] > 0.05).astype(int)  # Heavy rain threshold
-        elif "precip_7d_avg" in data.columns:
-            data["flood_label"] = (data["precip_7d_avg"] > 0.03).astype(int)
+        if "precip_7d_avg" in data.columns:
+            # Use high percentile for extreme precipitation
+            flood_threshold = data["precip_7d_avg"].quantile(0.95)  # Top 5% precipitation
+            data["flood_label"] = (data["precip_7d_avg"] >= flood_threshold).astype(int)
+        elif "tp" in data.columns:
+            # Use very high precipitation threshold
+            flood_threshold = data["tp"].quantile(0.98)  # Top 2% precipitation
+            data["flood_label"] = (data["tp"] >= flood_threshold).astype(int)
         else:
             data["flood_label"] = 0
     
-    # Rainy label
+    # Rainy label - moderate threshold
     if "rainy_label" not in data.columns:
         if "tp" in data.columns:
-            data["rainy_label"] = (data["tp"] > 0.001).astype(int)  # Any significant rain
+            # Use median as threshold for rainy vs non-rainy
+            rain_threshold = max(data["tp"].quantile(0.3), 1e-6)  # At least some measurable rain
+            data["rainy_label"] = (data["tp"] >= rain_threshold).astype(int)
+        elif "precip_7d_avg" in data.columns:
+            rain_threshold = data["precip_7d_avg"].quantile(0.4)
+            data["rainy_label"] = (data["precip_7d_avg"] >= rain_threshold).astype(int)
         else:
             data["rainy_label"] = 0
     
@@ -156,7 +182,8 @@ def add_labels_if_missing(data: pd.DataFrame) -> pd.DataFrame:
     for label in ['drought_label', 'flood_label', 'rainy_label']:
         if label in data.columns:
             dist = data[label].value_counts()
-            print(f"   {label}: {dict(dist)}")
+            total = len(data)
+            print(f"   {label}: {dict(dist)} ({dist[1]/total*100:.1f}% positive)" if 1 in dist else f"   {label}: {dict(dist)}")
     
     return data
 
@@ -232,8 +259,10 @@ def main():
         # Step 4: Prepare features and targets
         features = data[selected_features].copy()
         
-        # Clean up intermediate data
-        del data[selected_features]  # Remove from original dataframe
+        # Clean up intermediate data (fix: drop columns properly)
+        data_features_to_drop = [col for col in selected_features if col in data.columns]
+        if data_features_to_drop:
+            data = data.drop(columns=data_features_to_drop)
         gc.collect()
         monitor_memory()
         
