@@ -1,0 +1,13 @@
+Uses Logistic Regression and XGBoost only (both scale better).
+
+
+Adds Rainy Season label alongside drought/flood.
+
+
+Uses stratified train/test split.
+
+
+Keeps latitude & longitude (so we can filter by country/region later).
+
+
+Uses early stopping for XGBoost to prevent overfitting and save time.

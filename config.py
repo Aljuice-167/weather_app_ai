@@ -6,7 +6,7 @@ try:
     from google.colab import drive
     BASE_DIR = '/content/drive/MyDrive/weather_project'
     COLAB = True
-except:
+except ImportError:
     # Local machine paths
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     COLAB = False
@@ -25,8 +25,11 @@ MODELS_DIR = os.path.join(BASE_DIR, "python", "models")
 RAW_DATA_FILE = os.path.join(RAW_DATA_DIR, "ghana_weather_era5.nc")
 RAW_DATA_FILE_PATTERN = os.path.join(RAW_DATA_DIR, "era5_ghana_{year}_{month}.nc")
 PROCESSED_DATA_FILE = os.path.join(PROCESSED_DATA_DIR, "ghana_weather_features.csv")
+
+# Model output files
 DROUGHT_MODEL_FILE = os.path.join(MODELS_DIR, "drought_model.pkl")
 FLOOD_MODEL_FILE = os.path.join(MODELS_DIR, "flood_model.pkl")
+RAINY_MODEL_FILE = os.path.join(MODELS_DIR, "rainy_model.pkl")   # NEW
 
 # Ghana Coordinates
 GHANA_BOUNDS = {
@@ -39,3 +42,7 @@ GHANA_BOUNDS = {
 # Model Parameters
 TEST_SIZE = 0.2
 RANDOM_STATE = 42
+
+# Training Options
+SAMPLE_FRAC = None  # e.g., 0.1 for 10% of data (useful for testing); None = full dataset
+
