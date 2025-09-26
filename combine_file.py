@@ -1,4 +1,4 @@
-# combine_file.py - Clean version with instant+accum merge
+# combine_file.py - With debug stats for QA
 import os
 import pandas as pd
 import xarray as xr
@@ -104,6 +104,17 @@ def process_single_file(file_path):
         return None
 
 
+def print_debug_stats(df, prefix=""):
+    """Print QA stats for key variables."""
+    for var in ["tp", "t2m", "sp", "u10", "v10"]:
+        if var in df.columns:
+            stats = df[var].describe()
+            print(
+                f"   {prefix}{var}: "
+                f"min={stats['min']:.3f}, max={stats['max']:.3f}, mean={stats['mean']:.3f}"
+            )
+
+
 def process_era5_data():
     """Process and merge instant+accum ERA5 NetCDF files into one CSV."""
     os.makedirs(os.path.dirname(PROCESSED_DATA_FILE), exist_ok=True)
@@ -140,6 +151,9 @@ def process_era5_data():
         if df.empty:
             print("   ❌ Empty merged dataframe")
             continue
+
+        # Debug stats
+        print_debug_stats(df, prefix="📊 ")
 
         # 🚑 Safe CSV writing
         write_header = not os.path.exists(PROCESSED_DATA_FILE)
