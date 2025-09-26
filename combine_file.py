@@ -26,7 +26,7 @@ VARIABLE_MAP = {
 def inspect_netcdf_structure(file_path):
     """Debug function to inspect NetCDF file structure."""
     try:
-        ds = xr.open_dataset(file_path)
+        ds = xr.open_dataset(file_path, engine="netcdf4")
         print(f"\n🔍 INSPECTING: {os.path.basename(file_path)}")
         print(f"Variables: {list(ds.variables.keys())}")
         print(f"Dimensions: {list(ds.dims.keys())}")

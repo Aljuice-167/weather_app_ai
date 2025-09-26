@@ -30,7 +30,7 @@ def diagnose_netcdf():
     for file in era5_files:
         print(f"\nOpening file: {os.path.basename(file)}")
         try:
-            ds = xr.open_dataset(file)
+            ds = xr.open_dataset(file, engine="netcdf4")
             datasets.append(ds)
             
             # Print info for this file
