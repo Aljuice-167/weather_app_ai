@@ -1,4 +1,4 @@
-# feature_engineer.py (hybrid version for Colab + local)
+# feature_engineer.py (hybrid version for Colab + local, patched)
 import os
 import pandas as pd
 import numpy as np
@@ -88,7 +88,13 @@ class WeatherFeatureEngineer:
         if os.path.exists(FEATURES_FILE):
             os.remove(FEATURES_FILE)
 
-        chunk_iter = pd.read_csv(PROCESSED_DATA_FILE, chunksize=self.chunk_size)
+        # 🚑 Patch: tolerant parser for malformed lines
+        chunk_iter = pd.read_csv(
+            PROCESSED_DATA_FILE,
+            chunksize=self.chunk_size,
+            engine="python",
+            on_bad_lines="skip"
+        )
 
         for i, chunk in enumerate(chunk_iter, start=1):
             print(f"⚙️ Processing chunk {i} ...")
