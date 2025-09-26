@@ -38,20 +38,28 @@ def download_era5_data():
 
     years = ["2023", "2024"]
     months = [f"{m:02d}" for m in range(1, 13)]
+    required_vars = ["t2m", "d2m", "tp", "sp", "u10", "v10"]
 
     for year in years:
         for month in months:
             filename = f"era5_ghana_{year}_{month}.nc"
             filepath = os.path.join(RAW_DATA_DIR, filename)
 
-            # Check if file already exists & is valid
+            # Check if file already exists & contains required variables
             if os.path.exists(filepath):
                 try:
-                    xr.open_dataset(filepath).close()
-                    print(f"✅ {filename} already exists and is valid, skipping...")
-                    continue
+                    ds = xr.open_dataset(filepath)
+                    available_vars = list(ds.variables.keys())
+                    ds.close()
+                    if all(var in available_vars for var in required_vars):
+                        print(f"✅ {filename} already exists and has all variables, skipping...")
+                        continue
+                    else:
+                        print(f"⚠️ {filename} is missing variables, re-downloading...")
+                        os.remove(filepath)
                 except Exception:
                     print(f"⚠️ {filename} exists but is corrupted, re-downloading...")
+                    os.remove(filepath)
 
             print(f"📥 Downloading {filename}...")
 
@@ -77,7 +85,6 @@ def download_era5_data():
                 print(f"❌ Error downloading {filename}: {e}")
                 if os.path.exists(filepath):
                     os.remove(filepath)
-
 
 def verify_downloads(sample_n: int = 3):
     """Verify that downloaded NetCDF files contain required variables."""
